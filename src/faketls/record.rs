@@ -2,7 +2,7 @@ use std::io::{Error, ErrorKind};
 
 #[repr(u8)]
 pub enum RecordType {
-    ChangeCypherSpec = 0x14,
+    ChangeCipherSpec = 0x14,
     Handshake = 0x16,
     ApplicationData = 0x17,
     Alert = 0x15,
@@ -18,10 +18,10 @@ pub enum Version {
 
 #[derive(Debug)]
 pub struct TlsRecord<'a> {
-    type_: u8,
-    version: u16,
+    pub type_: u8,
+    pub version: u16,
     length: u16,
-    payload: &'a [u8],
+    pub payload: &'a [u8],
 }
 
 impl<'a> TlsRecord<'a> {

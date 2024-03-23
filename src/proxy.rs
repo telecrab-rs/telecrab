@@ -1,8 +1,4 @@
-use crate::{
-    cli::Cli,
-    config::{Config, User},
-    faketls,
-};
+use crate::{cli::Cli, config::Config, faketls};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -42,17 +38,25 @@ impl Proxy {
             let subproxy = self.clone();
 
             tokio_tasks.push(tokio::spawn(async move {
-                subproxy
+                let result = subproxy
                     .run_proxy_connection(&mut socket, socket_addr)
-                    .await
-                    .expect("Error running proxy connection");
+                    .await;
+                if result.is_err() {
+                    subproxy.cli.log(1, format!("Error: {:?}", result.err()));
+
+                    subproxy
+                        .log_event(ProxyEvent::ConnectionClosed(socket_addr))
+                        .await
+                        .expect("Error logging event");
+                }
+                socket.shutdown().await.expect("Error shutting down socket");
             }));
 
-            for task in tokio_tasks.iter_mut() {
-                if task.is_finished() {
-                    task.await.expect("Error running tokio task");
-                }
-            }
+            // Remove finished tasks from the list
+            tokio_tasks = tokio_tasks
+                .into_iter()
+                .filter_map(|task| if task.is_finished() { None } else { Some(task) })
+                .collect();
         }
     }
 
@@ -70,13 +74,9 @@ impl Proxy {
         self.log_event(ProxyEvent::ConnectionOpened(socket_addr))
             .await?;
 
-        self.faketls_handshake(socket)
-            .await
-            .expect("Error running faketls handshake");
+        self.faketls_handshake(socket).await?;
 
-        self.obfuscated2handshake(socket)
-            .await
-            .expect("Error running obfuscated2 handshake");
+        self.obfuscated2handshake(socket).await?;
 
         self.call_telegram(socket);
 
@@ -105,11 +105,12 @@ impl Proxy {
         ))
         .await?;
 
-        let server_hello =
-            faketls::ClientHello::check(&mut client_hello, &self.config.users, &self.cli)?
-                .check_valid()?
-                // TODO: Implement:  .check_antireplay()?
-                .generate_server_hello();
+        let mut server_hello = Vec::new();
+        faketls::ClientHello::check(&client_hello, &self.config.users, &self.cli)?
+            .check_valid()?
+            // TODO: Implement:  .check_antireplay()?
+            .generate_welcome_packet(&mut server_hello);
+
         socket.write_all(&server_hello).await?;
 
         self.log_event(ProxyEvent::DataSent(
