@@ -34,6 +34,15 @@ impl<'a> TlsRecord<'a> {
         }
     }
 
+    pub(crate) fn with_payload(&self, payload: &'a [u8]) -> Self {
+        Self {
+            type_: self.type_,
+            version: self.version,
+            length: payload.len() as u16,
+            payload: payload,
+        }
+    }
+
     pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, Error> {
         if bytes.len() < 5 {
             return Err(Error::new(ErrorKind::InvalidData, "Record too short"));
@@ -56,6 +65,31 @@ impl<'a> TlsRecord<'a> {
             length: length as u16,
             payload: &bytes[5..],
         })
+    }
+
+    pub fn from_bytes_multiple(bytes: &'a [u8]) -> Vec<Self> {
+        let mut records = Vec::new();
+        let mut offset = 0;
+
+        while offset + 5 < bytes.len() {
+            let type_ = bytes[offset];
+            let version = u16::from_be_bytes([bytes[offset + 1], bytes[offset + 2]]);
+            let length = u16::from_be_bytes([bytes[offset + 3], bytes[offset + 4]]) as usize;
+
+            if bytes.len() - offset < 5 + length {
+                break;
+            }
+
+            records.push(Self {
+                type_,
+                version,
+                length: length as u16,
+                payload: &bytes[offset + 5..offset + 5 + length],
+            });
+            offset += 5 + length;
+        }
+
+        records
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {

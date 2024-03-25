@@ -22,7 +22,7 @@ impl MTProtoSecret {
     }
 }
 
-struct MTProtoSecretVisitor;
+pub(super) struct MTProtoSecretVisitor;
 
 impl<'de> Visitor<'de> for MTProtoSecretVisitor {
     type Value = MTProtoSecret;

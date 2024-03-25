@@ -26,6 +26,15 @@ enum Commands {
 }
 
 impl Cli {
+    #[cfg(test)]
+    pub fn new(verbose: u8) -> Self {
+        Self {
+            verbose,
+            config_file: String::new(),
+            command: None,
+        }
+    }
+
     pub fn log(&self, level: u8, message: String) {
         if self.verbose >= level {
             println!("{}", message);

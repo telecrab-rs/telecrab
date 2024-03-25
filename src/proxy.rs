@@ -60,7 +60,7 @@ impl Proxy {
         }
     }
 
-    async fn log_event(&self, event: ProxyEvent) -> Result<(), std::io::Error> {
+    pub(crate) async fn log_event(&self, event: ProxyEvent) -> Result<(), std::io::Error> {
         let log_message = format!("{:?}", event);
         self.cli.log(2, log_message);
         Ok(())
@@ -74,19 +74,19 @@ impl Proxy {
         self.log_event(ProxyEvent::ConnectionOpened(socket_addr))
             .await?;
 
-        self.faketls_handshake(socket).await?;
+        let user = self.faketls_handshake(socket).await?;
 
-        self.obfuscated2handshake(socket).await?;
+        let ob2conn = self.obfuscated2handshake(user, socket).await?;
 
-        self.call_telegram(socket);
+        self.call_telegram(user, ob2conn, socket);
 
         self.relay_data(socket).await
     }
 
-    async fn faketls_handshake(
-        &self,
+    async fn faketls_handshake<'a>(
+        &'a self,
         socket: &mut tokio::net::TcpStream,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<&crate::config::User, std::io::Error> {
         let mut buffer = [0; 1024];
         let mut client_hello = Vec::new();
 
@@ -106,7 +106,13 @@ impl Proxy {
         .await?;
 
         let mut server_hello = Vec::new();
-        faketls::ClientHello::check(&client_hello, &self.config.users, &self.cli)?
+        let hello: faketls::ClientHello<'a> = faketls::ClientHello::check(
+            client_hello.as_mut_slice(),
+            &self.config.users,
+            &self.cli,
+        )?;
+
+        hello
             .check_valid()?
             // TODO: Implement:  .check_antireplay()?
             .generate_welcome_packet(&mut server_hello);
@@ -115,22 +121,25 @@ impl Proxy {
 
         self.log_event(ProxyEvent::DataSent(
             socket.peer_addr().unwrap(),
-            server_hello,
+            server_hello[..24].to_vec(),
         ))
         .await?;
 
-        Ok(())
+        Ok(hello.user())
     }
 
     async fn obfuscated2handshake(
         &self,
+        user: &crate::config::User,
         socket: &mut tokio::net::TcpStream,
-    ) -> Result<(), std::io::Error> {
-        Ok(())
+    ) -> Result<crate::obfuscated2::Connection, std::io::Error> {
+        crate::obfuscated2::client_handshake(&self, &user.secret.key, socket).await
     }
 
     async fn call_telegram(
         &self,
+        user: &crate::config::User,
+        ob2_connection: crate::obfuscated2::Connection,
         socket: &mut tokio::net::TcpStream,
     ) -> Result<(), std::io::Error> {
         Ok(())
