@@ -1,3 +1,9 @@
+/// Portions of this code were originally written by Cesar Eduardo Barros,
+/// z33ky, Pratyush Mishra and Max Bruckner and released under CC-0 1.0
+/// Universal (CC0 1.0) Public Domain Dedication.
+///
+/// The code can also be found in the separate crate constant_time_eq 0.3.0.
+
 #[must_use]
 pub fn constant_time_compare(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && constant_time_ne(a, b) == 0
