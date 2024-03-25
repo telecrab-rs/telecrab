@@ -1,4 +1,5 @@
 use std::io::{Error, ErrorKind};
+use tokio::io::AsyncReadExt;
 
 #[repr(u8)]
 pub enum RecordType {
@@ -17,42 +18,78 @@ pub enum Version {
 }
 
 #[derive(Debug)]
-pub struct TlsRecord<'a> {
+pub struct TlsRecordFields<'a> {
     pub type_: u8,
     pub version: u16,
-    length: u16,
+    pub length: u16,
     pub payload: &'a [u8],
 }
+#[derive(Debug)]
 
-impl<'a> TlsRecord<'a> {
-    pub fn new(type_: RecordType, version: Version, payload: &'a [u8]) -> Self {
-        Self {
-            type_: type_ as u8,
-            version: version as u16,
-            length: payload.len() as u16,
-            payload,
+pub struct TlsRecord {
+    pub bytes: Vec<u8>,
+}
+
+impl<'a> From<&'a TlsRecord> for TlsRecordFields<'a> {
+    fn from(record: &'a TlsRecord) -> Self {
+        TlsRecordFields {
+            type_: record.bytes[0],
+            version: u16::from_be_bytes([record.bytes[1], record.bytes[2]]),
+            length: u16::from_be_bytes([record.bytes[3], record.bytes[4]]),
+            payload: &record.bytes[5..],
         }
     }
+}
 
-    pub(crate) fn with_payload(&self, payload: &'a [u8]) -> Self {
-        Self {
-            type_: self.type_,
-            version: self.version,
-            length: payload.len() as u16,
-            payload: payload,
-        }
+impl From<TlsRecordFields<'_>> for TlsRecord {
+    fn from(fields: TlsRecordFields<'_>) -> Self {
+        let mut bytes = Vec::new();
+        bytes.push(fields.type_);
+        bytes.extend_from_slice(&fields.version.to_be_bytes());
+        bytes.extend_from_slice(&fields.length.to_be_bytes());
+        bytes.extend_from_slice(fields.payload);
+        Self { bytes }
+    }
+}
+
+impl TlsRecord {
+    pub fn new(type_: RecordType, version: Version, payload: Vec<u8>) -> Self {
+        let mut bytes = Vec::new();
+        bytes.push(type_ as u8);
+        bytes.extend_from_slice(&(version as u16).to_be_bytes());
+        bytes.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(&payload);
+        Self { bytes }
     }
 
-    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, Error> {
+    pub fn clone_with_payload(&self, payload: Vec<u8>) -> Self {
+        let mut bytes = Vec::new();
+        bytes.push(self.bytes[0]);
+        bytes.extend_from_slice(&self.bytes[1..5]);
+        bytes.extend_from_slice(&payload);
+        Self { bytes }
+    }
+
+    pub fn payload(&self) -> &[u8] {
+        &self.bytes[5..]
+    }
+
+    pub fn length(&self) -> usize {
+        u16::from_be_bytes([self.bytes[3], self.bytes[4]]) as usize
+    }
+
+    pub fn as_fields(&self) -> TlsRecordFields {
+        TlsRecordFields::from(self.clone())
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() < 5 {
             return Err(Error::new(ErrorKind::InvalidData, "Record too short"));
         }
 
-        let type_ = bytes[0];
-        let version = u16::from_be_bytes([bytes[1], bytes[2]]);
         let length = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
 
-        if bytes.len() - 5 != length {
+        if bytes.len() - 5 < length {
             return Err(Error::new(
                 ErrorKind::InvalidData,
                 "Record length does not match payload",
@@ -60,20 +97,19 @@ impl<'a> TlsRecord<'a> {
         }
 
         Ok(Self {
-            type_,
-            version,
-            length: length as u16,
-            payload: &bytes[5..],
+            bytes: bytes[..5 + length].to_vec(),
         })
     }
 
-    pub fn from_bytes_multiple(bytes: &'a [u8]) -> Vec<Self> {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.bytes.clone()
+    }
+
+    pub fn from_bytes_multiple(bytes: &[u8]) -> Vec<Self> {
         let mut records = Vec::new();
         let mut offset = 0;
 
         while offset + 5 < bytes.len() {
-            let type_ = bytes[offset];
-            let version = u16::from_be_bytes([bytes[offset + 1], bytes[offset + 2]]);
             let length = u16::from_be_bytes([bytes[offset + 3], bytes[offset + 4]]) as usize;
 
             if bytes.len() - offset < 5 + length {
@@ -81,23 +117,11 @@ impl<'a> TlsRecord<'a> {
             }
 
             records.push(Self {
-                type_,
-                version,
-                length: length as u16,
-                payload: &bytes[offset + 5..offset + 5 + length],
+                bytes: bytes[offset..offset + 5 + length].to_vec(),
             });
             offset += 5 + length;
         }
 
         records
-    }
-
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.push(self.type_);
-        bytes.extend_from_slice(&self.version.to_be_bytes());
-        bytes.extend_from_slice(&(self.payload.len() as u16).to_be_bytes());
-        bytes.extend_from_slice(&self.payload);
-        bytes
     }
 }

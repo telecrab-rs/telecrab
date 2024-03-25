@@ -2,7 +2,11 @@
 mod tests {
     use crate::{
         cli::Cli,
-        faketls::{self, parse_client_hello, record, ClientHello, HANDSHAKE_TYPE_SERVER},
+        faketls::{
+            self, parse_client_hello,
+            record::{self, TlsRecordFields},
+            ClientHello, HANDSHAKE_TYPE_SERVER,
+        },
         secret::{self, MTProtoSecret},
     };
     use base64::Engine;
@@ -59,15 +63,14 @@ mod tests {
         cipher_suite: 4867,
         full: "AQAB/AMDXvCPc3aAbHbhRLv0kUmy6BfPZOGvsused5/HNsKXEPsgSt2BZ2uHMFn3B2trD1jfdtpjoJOOg6JBeLhFcyCACq4ANBMDEwETAsAswCvAJMAjwArACcypwDDAL8AowCfAFMATzKgAnQCcAD0APAA1AC/ACMASAAoBAAF//wEAAQAAAAAbABkAABZzdG9yYWdlLmdvb2dsZWFwaXMuY29tABcAAAANABgAFgQDCAQEAQUDAgMIBQgFBQEIBgYBAgEABQAFANAAAAAzdAAAABIAAAAQADAALgJoMgVoMi0xNgVoMi0xNQVoMi0xNAhzcGR5LzMuMQZzcGR5LzMIaHR0cC8xLjEACwACAQAAMwAmACQAHQAgB/7oLx9JElIALsLJS91H2QNyU1H0osKwIUelVndsLyIALQACAQEAKwAJCAMEAwMDAgMBAAoACgAIAB0AFwAYABkAFQChAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into()
     };
-        let mut payload: Vec<u8> = case.full.bytes();
         let mut handshake = record::TlsRecord::new(
             record::RecordType::Handshake,
             record::Version::TLS10,
-            &mut payload,
+            case.full.bytes(),
         );
 
         assert!(
-            parse_client_hello(&test_cli(), &mut handshake, test_secret().key)
+            parse_client_hello(&test_cli(), &handshake, test_secret().key)
                 .unwrap()
                 .is_none()
         );
@@ -102,14 +105,13 @@ mod tests {
     }
 
     fn check_ok_client_hello(case: TestCaseStr) {
-        let mut payload: Vec<u8> = case.full.bytes();
         let mut handshake = record::TlsRecord::new(
             record::RecordType::Handshake,
             record::Version::TLS10,
-            &mut payload,
+            case.full.bytes(),
         );
 
-        let client_hello = parse_client_hello(&test_cli(), &mut handshake, test_secret().key)
+        let client_hello = parse_client_hello(&test_cli(), &handshake, test_secret().key)
             .unwrap()
             .unwrap();
 
@@ -139,7 +141,11 @@ mod tests {
         client_hello.generate_welcome_packet(&mut welcome_packet);
 
         let welcome_packet_initial = welcome_packet.clone();
-        let records = record::TlsRecord::from_bytes_multiple(&welcome_packet_initial);
+        let bytes_vec = record::TlsRecord::from_bytes_multiple(&welcome_packet_initial);
+        let records = bytes_vec
+            .iter()
+            .map(TlsRecordFields::from)
+            .collect::<Vec<TlsRecordFields>>();
 
         assert_eq!(records[0].type_, record::RecordType::Handshake as u8);
         assert_eq!(records[0].version, record::Version::TLS12 as u16);

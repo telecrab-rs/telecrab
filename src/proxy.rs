@@ -1,6 +1,14 @@
-use crate::{cli::Cli, config::Config, faketls};
+use crate::{
+    cli::Cli,
+    config::Config,
+    faketls::{self, conn::FakeTlsStream},
+    obfuscated2,
+};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 #[derive(Debug)]
 pub enum ProxyEvent {
@@ -76,11 +84,13 @@ impl Proxy {
 
         let user = self.faketls_handshake(socket).await?;
 
-        let ob2conn = self.obfuscated2handshake(user, socket).await?;
+        let mut faketls_socket = faketls::wrap_stream(socket);
 
-        self.call_telegram(user, ob2conn, socket);
+        let mut ob2conn = self.obfuscated2handshake(user, &mut faketls_socket).await?;
 
-        self.relay_data(socket).await
+        let mut telegram_conn = self.call_telegram(user, ob2conn.dc).await?;
+
+        self.relay_data(&mut telegram_conn, &mut ob2conn).await
     }
 
     async fn faketls_handshake<'a>(
@@ -131,21 +141,24 @@ impl Proxy {
     async fn obfuscated2handshake(
         &self,
         user: &crate::config::User,
-        socket: &mut tokio::net::TcpStream,
-    ) -> Result<crate::obfuscated2::Connection, std::io::Error> {
-        crate::obfuscated2::client_handshake(&self, &user.secret.key, socket).await
+        socket: &mut FakeTlsStream<&mut tokio::net::TcpStream>,
+    ) -> Result<obfuscated2::conn::Connection, std::io::Error> {
+        obfuscated2::client_handshake(&self, &user.secret.key, socket).await
     }
 
     async fn call_telegram(
         &self,
         user: &crate::config::User,
-        ob2_connection: crate::obfuscated2::Connection,
-        socket: &mut tokio::net::TcpStream,
-    ) -> Result<(), std::io::Error> {
-        Ok(())
+        dc: i32,
+    ) -> Result<tokio::net::TcpStream, std::io::Error> {
+        todo!()
     }
 
-    async fn relay_data(&self, socket: &mut tokio::net::TcpStream) -> Result<(), std::io::Error> {
+    async fn relay_data(
+        &self,
+        tg_socket: &mut TcpStream,
+        client_socket: &mut obfuscated2::conn::Connection,
+    ) -> Result<(), std::io::Error> {
         Ok(())
     }
 }

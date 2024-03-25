@@ -1,13 +1,15 @@
-use aes::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
+pub mod conn;
+
+use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::Aes256;
 use ctr::Ctr128BE;
-use hmac::digest::KeyInit;
-use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
-use std::io::Read;
 use tokio::io::AsyncReadExt;
 
+use crate::faketls::conn::FakeTlsStream;
 use crate::safety::constant_time_compare;
+
+use self::conn::Connection;
 
 const DEFAULT_DC: u8 = 2;
 const HANDSHAKE_FRAME_LEN: usize = 64;
@@ -25,13 +27,6 @@ const HANDSHAKE_FRAME_OFFSET_DC: usize =
 // We only support faketls
 const HANDSHAKE_CONNECTION_TYPE: [u8; 4] = [0xdd, 0xdd, 0xdd, 0xdd];
 
-#[derive(Clone)]
-pub struct Connection {
-    dc: i32,
-    encryptor: Ctr128BE<Aes256>,
-    decryptor: Ctr128BE<Aes256>,
-}
-
 struct ClientHandshakeFrame(HandShakeFrame);
 
 struct HandShakeFrame {
@@ -47,8 +42,10 @@ impl HandShakeFrame {
         i32::from_be_bytes([0, 0, 0, self.data[HANDSHAKE_FRAME_OFFSET_DC]])
     }
 
-    fn key(&self) -> &[u8] {
-        &self.data[HANDSHAKE_FRAME_OFFSET_KEY..HANDSHAKE_FRAME_OFFSET_IV]
+    fn key(&self) -> &[u8; HANDSHAKE_KEY_LEN] {
+        self.data[HANDSHAKE_FRAME_OFFSET_KEY..HANDSHAKE_FRAME_OFFSET_IV]
+            .try_into()
+            .unwrap()
     }
 
     fn iv(&self) -> &[u8; HANDSHAKE_IV_LEN] {
@@ -85,7 +82,7 @@ impl ClientHandshakeFrame {
         hasher.update(secret);
         let result = hasher.finalize();
 
-        Self::make_aes_ctr(&result, inverted_handshake.iv().try_into().unwrap())
+        Self::make_aes_ctr(&result, inverted_handshake.iv())
     }
 
     // Helper method to encapsulate AES CTR creation
@@ -99,7 +96,7 @@ impl ClientHandshakeFrame {
 pub async fn client_handshake(
     proxy: &crate::proxy::Proxy,
     secret: &[u8],
-    socket: &mut tokio::net::TcpStream,
+    socket: &mut FakeTlsStream<&mut tokio::net::TcpStream>,
 ) -> Result<Connection, std::io::Error> {
     let mut data = [0u8; HANDSHAKE_FRAME_LEN];
     socket.read_exact(&mut data).await.map_err(|e| {
@@ -133,6 +130,11 @@ pub fn client_handshake_handle(
     // Check connection type:
     let hsf = HandShakeFrame::new(*data);
     let requested_connection_type = hsf.connection_type();
+    println!(
+        "Requested connection type: (ciphertext={:?}, plaintext={:?})",
+        hex::encode(handshake.0.connection_type()),
+        hex::encode(requested_connection_type)
+    );
     if !constant_time_compare(requested_connection_type, &HANDSHAKE_CONNECTION_TYPE) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,

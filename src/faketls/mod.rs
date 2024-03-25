@@ -1,14 +1,15 @@
+pub mod conn;
 mod constants;
 pub mod record;
 mod tests;
 
-use self::constants::*;
+use self::{constants::*, record::TlsRecord};
 use crate::{cli::Cli, config::User, safety::constant_time_compare, secret::SECRET_KEY_LEN};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::io::{Error, ErrorKind};
+use tokio::io::{AsyncRead, AsyncWrite};
 
-use self::record::TlsRecord;
 use rand::Rng;
 use x25519_dalek::{self, X25519_BASEPOINT_BYTES};
 
@@ -39,11 +40,10 @@ impl<'a> ClientHello<'a> {
         users: &'a [User],
         cli: &'a Cli,
     ) -> Result<ClientHello<'a>, Error> {
-        let mut record = record::TlsRecord::from_bytes(client_hello)?;
+        let record = record::TlsRecord::from_bytes(client_hello)?;
 
         for user in users.iter() {
-            let mut client_hello_copy = record.payload.to_vec().clone();
-            let client_hello = parse_client_hello(cli, &mut record, user.secret.key)
+            let client_hello = parse_client_hello(cli, &record, user.secret.key)
                 .map_err(|str| Error::new(ErrorKind::Other, str))?;
 
             if client_hello.is_none() {
@@ -79,21 +79,17 @@ impl<'a> ClientHello<'a> {
     }
 
     pub fn generate_welcome_packet(&self, buffer: &mut Vec<u8>) {
-        let mut welcome_packet = Vec::new();
-        self.generate_server_hello(&mut welcome_packet);
-
         let mut record = TlsRecord::new(
             record::RecordType::Handshake,
             record::Version::TLS12,
-            welcome_packet.as_mut_slice(),
+            self.generate_server_hello(),
         );
         buffer.extend_from_slice(&record.to_bytes());
 
-        let mut payload = [CHANGE_CYPHER_VALUE];
         record = TlsRecord::new(
             record::RecordType::ChangeCipherSpec,
             record::Version::TLS12,
-            &mut payload,
+            vec![CHANGE_CYPHER_VALUE],
         );
         buffer.extend_from_slice(&record.to_bytes());
 
@@ -104,7 +100,7 @@ impl<'a> ClientHello<'a> {
         record = TlsRecord::new(
             record::RecordType::ApplicationData,
             record::Version::TLS12,
-            &mut random_garbage,
+            random_garbage,
         );
         buffer.extend_from_slice(&record.to_bytes());
 
@@ -119,7 +115,8 @@ impl<'a> ClientHello<'a> {
             .copy_from_slice(&mac_result);
     }
 
-    pub fn generate_server_hello(&self, server_hello: &mut Vec<u8>) {
+    pub fn generate_server_hello(&self) -> Vec<u8> {
+        let mut server_hello = Vec::new();
         let mut body_buf = Vec::new();
         let mut slice_buf = [0u8; 2];
         let digest: [u8; RANDOM_LENGTH] = client_hello_empty_random();
@@ -143,47 +140,52 @@ impl<'a> ClientHello<'a> {
         header[0] = HANDSHAKE_TYPE_SERVER;
         server_hello.extend_from_slice(&header);
         server_hello.extend_from_slice(&body_buf);
+        server_hello
     }
 }
 
 pub fn parse_client_hello<'a>(
     cli: &Cli,
-    record: &'a mut TlsRecord,
+    record: &TlsRecord,
     secret: [u8; SECRET_KEY_LEN],
 ) -> Result<Option<ClientHello<'a>>, String> {
     let mut hello = ClientHello::new();
 
-    if record.payload.len() < CLIENT_HELLO_MIN_LENGTH {
+    if record.payload().len() < CLIENT_HELLO_MIN_LENGTH {
         return Err("Client hello too short".to_string());
     }
-    if record.payload[0] != HANDSHAKE_TYPE_CLIENT {
-        return Err(format!("Invalid handshake type: {}", record.payload[0]).to_string());
+    if record.payload()[0] != HANDSHAKE_TYPE_CLIENT {
+        return Err(format!("Invalid handshake type: {}", record.payload()[0]).to_string());
     }
 
     // Bytes are [0, handshake[1], handshake[2], handshake[3]]
-    let handshake_size =
-        u32::from_be_bytes([0, record.payload[1], record.payload[2], record.payload[3]]) as usize;
+    let handshake_size = u32::from_be_bytes([
+        0,
+        record.payload()[1],
+        record.payload()[2],
+        record.payload()[3],
+    ]) as usize;
 
-    if record.payload.len() - 4 != handshake_size {
+    if record.payload().len() - 4 != handshake_size {
         return Err(format!(
             "Invalid handshake size. Manifested={}, real={}",
             hex::encode(handshake_size.to_be_bytes()),
-            hex::encode((record.payload.len() - 4).to_be_bytes())
+            hex::encode((record.payload().len() - 4).to_be_bytes())
         ));
     }
 
     let empty_random = client_hello_empty_random();
 
     hello.random.copy_from_slice(
-        &record.payload[CLIENT_HELLO_RANDOM_OFFSET..CLIENT_HELLO_RANDOM_OFFSET + RANDOM_LENGTH],
+        &record.payload()[CLIENT_HELLO_RANDOM_OFFSET..CLIENT_HELLO_RANDOM_OFFSET + RANDOM_LENGTH],
     );
 
-    let mut payload_with_empty_random = record.payload.to_vec();
+    let mut payload_with_empty_random = record.payload().to_vec();
     payload_with_empty_random
         [CLIENT_HELLO_RANDOM_OFFSET..CLIENT_HELLO_RANDOM_OFFSET + RANDOM_LENGTH]
         .copy_from_slice(&empty_random);
 
-    let computed_record = record.with_payload(&payload_with_empty_random);
+    let computed_record = record.clone_with_payload(payload_with_empty_random);
 
     // mac is calculated for the whole record, not only the payload
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(&secret).unwrap();
@@ -197,7 +199,7 @@ pub fn parse_client_hello<'a>(
 
     if !constant_time_compare(
         &computed_random[..computed_random.len() - 4],
-        &computed_record.payload
+        &computed_record.payload()
             [CLIENT_HELLO_RANDOM_OFFSET..CLIENT_HELLO_RANDOM_OFFSET + RANDOM_LENGTH - 4],
     ) {
         // Probably just means that the user did not log in with this secret
@@ -209,8 +211,8 @@ pub fn parse_client_hello<'a>(
         .unwrap();
     hello.time = u32::from_le_bytes(timestamp);
 
-    parse_session_id(&mut hello, &record.payload);
-    parse_cipher_suite_sni(cli, &mut hello, &record.payload);
+    parse_session_id(&mut hello, &record.payload());
+    parse_cipher_suite_sni(cli, &mut hello, &record.payload());
 
     Ok(Some(hello))
 }
@@ -337,4 +339,11 @@ fn parse_cipher_suite_sni(cli: &Cli, hello: &mut ClientHello, handshake: &[u8]) 
 
 fn take_u16(bytes: &[u8], offset: usize) -> u16 {
     u16::from_be_bytes(bytes[offset..offset + 2].try_into().unwrap())
+}
+
+pub fn wrap_stream<T>(stream: T) -> conn::FakeTlsStream<T>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    conn::FakeTlsStream::new(stream)
 }
