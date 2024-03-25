@@ -1,6 +1,6 @@
 use std::io::{Error, ErrorKind};
-use tokio::io::AsyncReadExt;
 
+#[allow(dead_code)]
 #[repr(u8)]
 pub enum RecordType {
     ChangeCipherSpec = 0x14,
@@ -9,6 +9,7 @@ pub enum RecordType {
     Alert = 0x15,
 }
 
+#[allow(dead_code)]
 #[repr(u16)]
 pub enum Version {
     TLS10 = 0x0301,
@@ -78,10 +79,6 @@ impl TlsRecord {
         u16::from_be_bytes([self.bytes[3], self.bytes[4]]) as usize
     }
 
-    pub fn as_fields(&self) -> TlsRecordFields {
-        TlsRecordFields::from(self.clone())
-    }
-
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() < 5 {
             return Err(Error::new(ErrorKind::InvalidData, "Record too short"));
@@ -105,6 +102,7 @@ impl TlsRecord {
         self.bytes.clone()
     }
 
+    #[cfg(test)]
     pub fn from_bytes_multiple(bytes: &[u8]) -> Vec<Self> {
         let mut records = Vec::new();
         let mut offset = 0;
