@@ -205,7 +205,6 @@ impl Proxy {
         ))?;
 
         tg_socket.shutdown().await?;
-        client_socket.shutdown().await?;
         Ok(())
     }
 }
