@@ -1,4 +1,5 @@
 pub const DEFAULT_DC: u8 = 2;
+
 pub const HANDSHAKE_FRAME_LEN: usize = 64;
 pub const HANDSHAKE_KEY_LEN: usize = 32;
 pub const HANDSHAKE_IV_LEN: usize = 16;

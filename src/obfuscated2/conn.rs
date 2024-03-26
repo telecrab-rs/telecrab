@@ -10,10 +10,10 @@ pub struct ObfuscatedStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    inner: BufStream<T>,
     pub dc: i32,
-    pub encryptor: Ctr128BE<Aes256>,
-    pub decryptor: Ctr128BE<Aes256>,
+    inner: BufStream<T>,
+    encryptor: Ctr128BE<Aes256>,
+    decryptor: Ctr128BE<Aes256>,
 }
 
 impl<T> ObfuscatedStream<T>
@@ -32,6 +32,16 @@ where
             encryptor,
             decryptor,
         }
+    }
+
+    #[cfg(test)]
+    pub fn encryptor(&mut self) -> &mut Ctr128BE<Aes256> {
+        &mut self.encryptor
+    }
+
+    #[cfg(test)]
+    pub fn decryptor(&mut self) -> &mut Ctr128BE<Aes256> {
+        &mut self.decryptor
     }
 }
 

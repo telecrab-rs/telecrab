@@ -93,7 +93,7 @@ impl Proxy {
 
         let mut ob2conn = self.obfuscated2handshake(user, &mut faketls_socket).await?;
 
-        let mut telegram_conn = self.call_telegram(user, ob2conn.dc).await?;
+        let mut telegram_conn = self.call_telegram(ob2conn.dc).await?;
         self.log_event(ProxyEvent::ConnectedToDC(telegram_conn.dc))?;
 
         self.relay_data(&mut telegram_conn, &mut ob2conn).await
@@ -154,7 +154,6 @@ impl Proxy {
 
     async fn call_telegram(
         &self,
-        user: &crate::config::User,
         mut dc: i32,
     ) -> Result<obfuscated2::conn::ObfuscatedStream<tokio::net::TcpStream>, std::io::Error> {
         let prefer_ip = telegram::known_addresses::PreferIPType::PreferOnlyIPv4;

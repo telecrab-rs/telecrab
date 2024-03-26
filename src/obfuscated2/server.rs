@@ -4,7 +4,7 @@ use ctr::Ctr128BE;
 use super::{make_aes_ctr, HandShakeFrame};
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ServerHandshakeFrame(pub(crate) HandShakeFrame);
+pub(super) struct ServerHandshakeFrame(pub(super) HandShakeFrame);
 
 impl ServerHandshakeFrame {
     pub fn decryptor(&self) -> Ctr128BE<Aes256> {

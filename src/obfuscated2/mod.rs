@@ -148,7 +148,7 @@ where
 }
 
 pub async fn server_handshake<'a>(
-    proxy: &'a crate::proxy::Proxy,
+    _proxy: &'a crate::proxy::Proxy,
     mut socket: tokio::net::TcpStream,
     dc: i32,
 ) -> Result<ObfuscatedStream<tokio::net::TcpStream>, std::io::Error> {
@@ -240,12 +240,12 @@ mod test {
 
         // Use the decryptor to decrypt the encrypted text to read
         let mut read_content = read_content_cipher.to_vec();
-        conn.decryptor.apply_keystream(&mut read_content);
+        conn.decryptor().apply_keystream(&mut read_content);
         assert_eq!(read_content, read_content_text);
 
         // Use the encryptor to encrypt the decrypted text to write
         let mut write_content = write_content_text.to_vec();
-        conn.encryptor.apply_keystream(&mut write_content);
+        conn.encryptor().apply_keystream(&mut write_content);
         assert_eq!(write_content, write_content_cipher);
 
         Ok(())
@@ -281,12 +281,12 @@ mod test {
 
         // Use the decryptor to decrypt the encrypted text to read
         let mut read_content = read_content_cipher.to_vec();
-        conn.decryptor.apply_keystream(&mut read_content);
+        conn.decryptor().apply_keystream(&mut read_content);
         assert_eq!(read_content, read_content_text);
 
         // Use the encryptor to encrypt the decrypted text to write
         let mut write_content = write_content_text.to_vec();
-        conn.encryptor.apply_keystream(&mut write_content);
+        conn.encryptor().apply_keystream(&mut write_content);
         assert_eq!(write_content, write_content_cipher);
 
         Ok(())

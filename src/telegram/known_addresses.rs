@@ -98,6 +98,7 @@ pub const TELEGRAM_V6_TEST_ADDRESSES: [TelegramAddress; 3] = [
     )),
 ];
 
+#[allow(dead_code)]
 pub enum PreferIPType {
     PreferOnlyIPv4,
     PreferOnlyIPv6,

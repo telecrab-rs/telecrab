@@ -63,7 +63,7 @@ mod tests {
         cipher_suite: 4867,
         full: "AQAB/AMDXvCPc3aAbHbhRLv0kUmy6BfPZOGvsused5/HNsKXEPsgSt2BZ2uHMFn3B2trD1jfdtpjoJOOg6JBeLhFcyCACq4ANBMDEwETAsAswCvAJMAjwArACcypwDDAL8AowCfAFMATzKgAnQCcAD0APAA1AC/ACMASAAoBAAF//wEAAQAAAAAbABkAABZzdG9yYWdlLmdvb2dsZWFwaXMuY29tABcAAAANABgAFgQDCAQEAQUDAgMIBQgFBQEIBgYBAgEABQAFANAAAAAzdAAAABIAAAAQADAALgJoMgVoMi0xNgVoMi0xNQVoMi0xNAhzcGR5LzMuMQZzcGR5LzMIaHR0cC8xLjEACwACAQAAMwAmACQAHQAgB/7oLx9JElIALsLJS91H2QNyU1H0osKwIUelVndsLyIALQACAQEAKwAJCAMEAwMDAgMBAAoACgAIAB0AFwAYABkAFQChAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into()
     };
-        let mut handshake = record::TlsRecord::new(
+        let handshake = record::TlsRecord::new(
             record::RecordType::Handshake,
             record::Version::TLS10,
             case.full.bytes(),
@@ -105,7 +105,7 @@ mod tests {
     }
 
     fn check_ok_client_hello(case: TestCaseStr) {
-        let mut handshake = record::TlsRecord::new(
+        let handshake = record::TlsRecord::new(
             record::RecordType::Handshake,
             record::Version::TLS10,
             case.full.bytes(),
