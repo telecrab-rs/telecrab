@@ -3,6 +3,8 @@ use std::{pin::Pin, task::Poll};
 use rand::Rng;
 use tokio::io::{AsyncRead, AsyncWrite, BufStream};
 
+use crate::proxy::HasPeerAddr;
+
 use super::record::TlsRecord;
 
 #[derive(Debug)]
@@ -28,8 +30,20 @@ where
     }
 }
 
-impl FakeTlsStream<&mut tokio::net::TcpStream> {
-    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+impl<T: HasPeerAddr> HasPeerAddr for FakeTlsStream<T>
+where
+    T: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.inner.get_ref().peer_addr()
+    }
+}
+
+impl<T: HasPeerAddr> HasPeerAddr for &FakeTlsStream<T>
+where
+    T: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.inner.get_ref().peer_addr()
     }
 }

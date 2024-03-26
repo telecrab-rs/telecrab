@@ -25,6 +25,24 @@ pub enum ProxyEvent {
     ProxiedDataToTelegram(std::net::SocketAddr, usize),
 }
 
+pub(crate) trait HasPeerAddr {
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr>;
+}
+
+impl HasPeerAddr for TcpStream {
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        TcpStream::peer_addr(&self)
+    }
+}
+impl<T> HasPeerAddr for &mut T
+where
+    T: HasPeerAddr,
+{
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        HasPeerAddr::peer_addr(*self)
+    }
+}
+
 #[derive(Clone)]
 pub struct Proxy {
     cli: Cli,

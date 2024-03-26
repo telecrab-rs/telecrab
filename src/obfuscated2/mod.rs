@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
+use crate::proxy::HasPeerAddr;
+
 use self::conn::ObfuscatedStream;
 pub use self::frame::*;
 use super::faketls::conn::FakeTlsStream;

@@ -1,6 +1,6 @@
 use std::{pin::Pin, task::Poll};
 
-use crate::faketls::conn::FakeTlsStream;
+use crate::{faketls::conn::FakeTlsStream, proxy::HasPeerAddr};
 use aes::cipher::StreamCipher;
 use aes::Aes256;
 use ctr::Ctr128BE;
@@ -45,14 +45,19 @@ where
     }
 }
 
-impl ObfuscatedStream<tokio::net::TcpStream> {
-    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+impl<T: HasPeerAddr> HasPeerAddr for ObfuscatedStream<T>
+where
+    T: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.inner.get_ref().peer_addr()
     }
 }
-
-impl ObfuscatedStream<&mut FakeTlsStream<&mut tokio::net::TcpStream>> {
-    pub fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+impl<T: HasPeerAddr> HasPeerAddr for &ObfuscatedStream<T>
+where
+    T: tokio::io::AsyncReadExt + tokio::io::AsyncWriteExt + Unpin,
+{
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.inner.get_ref().peer_addr()
     }
 }
