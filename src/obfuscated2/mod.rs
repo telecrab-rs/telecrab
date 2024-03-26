@@ -1,37 +1,21 @@
 pub mod conn;
+pub mod frame;
+pub mod server;
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::Aes256;
 use ctr::Ctr128BE;
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
-use crate::faketls::conn::FakeTlsStream;
-use crate::safety::constant_time_compare;
+use self::conn::ObfuscatedStream;
+pub use self::frame::*;
+use super::faketls::conn::FakeTlsStream;
+use super::safety::constant_time_compare;
 
-use self::conn::Connection;
-
-const DEFAULT_DC: u8 = 2;
-const HANDSHAKE_FRAME_LEN: usize = 64;
-const HANDSHAKE_KEY_LEN: usize = 32;
-const HANDSHAKE_IV_LEN: usize = 16;
-const HANDSHAKE_CONNECTION_TYPE_LEN: usize = 4;
-
-const HANDSHAKE_FRAME_OFFSET_START: usize = 8;
-const HANDSHAKE_FRAME_OFFSET_KEY: usize = HANDSHAKE_FRAME_OFFSET_START;
-const HANDSHAKE_FRAME_OFFSET_IV: usize = HANDSHAKE_FRAME_OFFSET_KEY + HANDSHAKE_KEY_LEN;
-const HANDSHAKE_FRAME_OFFSET_CONNECTION_TYPE: usize = HANDSHAKE_FRAME_OFFSET_IV + HANDSHAKE_IV_LEN;
-const HANDSHAKE_FRAME_OFFSET_DC: usize =
-    HANDSHAKE_FRAME_OFFSET_CONNECTION_TYPE + HANDSHAKE_CONNECTION_TYPE_LEN;
-
-// We only support faketls
-const HANDSHAKE_CONNECTION_TYPE: [u8; 4] = [0xdd, 0xdd, 0xdd, 0xdd];
-
+#[derive(Clone, Copy, Debug)]
 struct ClientHandshakeFrame(HandShakeFrame);
-
-struct HandShakeFrame {
-    data: [u8; HANDSHAKE_FRAME_LEN],
-}
 
 impl HandShakeFrame {
     fn new(data: [u8; HANDSHAKE_FRAME_LEN]) -> HandShakeFrame {
@@ -54,6 +38,17 @@ impl HandShakeFrame {
             .unwrap()
     }
 
+    fn with_key(&mut self, key: &[u8; HANDSHAKE_KEY_LEN]) -> &mut Self {
+        self.data[HANDSHAKE_FRAME_OFFSET_KEY..HANDSHAKE_FRAME_OFFSET_IV].copy_from_slice(key);
+        self
+    }
+
+    fn with_iv(&mut self, iv: &[u8; HANDSHAKE_IV_LEN]) -> &mut Self {
+        self.data[HANDSHAKE_FRAME_OFFSET_IV..HANDSHAKE_FRAME_OFFSET_CONNECTION_TYPE]
+            .copy_from_slice(iv);
+        self
+    }
+
     fn connection_type(&self) -> &[u8] {
         &self.data[HANDSHAKE_FRAME_OFFSET_CONNECTION_TYPE..HANDSHAKE_FRAME_OFFSET_DC]
     }
@@ -72,7 +67,7 @@ impl ClientHandshakeFrame {
         hasher.update(secret);
         let result = hasher.finalize();
 
-        Self::make_aes_ctr(&result, &self.0.iv())
+        make_aes_ctr(&result, &self.0.iv())
     }
 
     fn encryptor(&self, secret: &[u8]) -> Ctr128BE<Aes256> {
@@ -82,22 +77,23 @@ impl ClientHandshakeFrame {
         hasher.update(secret);
         let result = hasher.finalize();
 
-        Self::make_aes_ctr(&result, inverted_handshake.iv())
+        make_aes_ctr(&result, inverted_handshake.iv())
     }
+}
 
-    // Helper method to encapsulate AES CTR creation
-    fn make_aes_ctr(key: &[u8], iv: &[u8; HANDSHAKE_IV_LEN]) -> Ctr128BE<Aes256> {
-        Ctr128BE::<Aes256>::new(key.into(), iv.into())
-    }
+// Helper method to encapsulate AES CTR creation
+pub(crate) fn make_aes_ctr(key: &[u8], iv: &[u8; HANDSHAKE_IV_LEN]) -> Ctr128BE<Aes256> {
+    Ctr128BE::<Aes256>::new(key.into(), iv.into())
 }
 
 // Assuming handshakeFrame and other related structs and methods are properly defined...
 // Example client handshake function:
-pub async fn client_handshake(
+pub async fn client_handshake<'a, 'b>(
     proxy: &crate::proxy::Proxy,
     secret: &[u8],
-    socket: &mut FakeTlsStream<&mut tokio::net::TcpStream>,
-) -> Result<Connection, std::io::Error> {
+    socket: &'a mut FakeTlsStream<&'b mut tokio::net::TcpStream>,
+) -> Result<ObfuscatedStream<&'a mut FakeTlsStream<&'b mut tokio::net::TcpStream>>, std::io::Error>
+{
     let mut data = [0u8; HANDSHAKE_FRAME_LEN];
     socket.read_exact(&mut data).await.map_err(|e| {
         std::io::Error::new(
@@ -106,20 +102,22 @@ pub async fn client_handshake(
         )
     })?;
 
-    proxy
-        .log_event(crate::proxy::ProxyEvent::DataReceived(
-            socket.peer_addr().unwrap(),
-            data.to_vec(),
-        ))
-        .await?;
+    proxy.log_event(crate::proxy::ProxyEvent::DataReceived(
+        socket.peer_addr().unwrap(),
+        data.to_vec(),
+    ))?;
 
-    client_handshake_handle(secret, &mut data)
+    client_handshake_handle(socket, secret, &mut data)
 }
 
-pub fn client_handshake_handle(
+pub fn client_handshake_handle<T>(
+    inner_socket: T,
     secret: &[u8],
     data: &mut [u8; HANDSHAKE_FRAME_LEN],
-) -> Result<Connection, std::io::Error> {
+) -> Result<ObfuscatedStream<T>, std::io::Error>
+where
+    T: AsyncRead + AsyncWrite + Unpin,
+{
     let handshake = ClientHandshakeFrame(HandShakeFrame { data: *data });
 
     let mut decryptor = handshake.decryptor(secret);
@@ -130,11 +128,7 @@ pub fn client_handshake_handle(
     // Check connection type:
     let hsf = HandShakeFrame::new(*data);
     let requested_connection_type = hsf.connection_type();
-    println!(
-        "Requested connection type: (ciphertext={:?}, plaintext={:?})",
-        hex::encode(handshake.0.connection_type()),
-        hex::encode(requested_connection_type)
-    );
+
     if !constant_time_compare(requested_connection_type, &HANDSHAKE_CONNECTION_TYPE) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -145,42 +139,156 @@ pub fn client_handshake_handle(
         ));
     }
 
-    Ok(Connection {
-        dc: hsf.dc(),
+    Ok(ObfuscatedStream::new(
+        inner_socket,
+        hsf.dc(),
         encryptor,
         decryptor,
-    })
+    ))
+}
+
+pub async fn server_handshake<'a>(
+    proxy: &'a crate::proxy::Proxy,
+    mut socket: tokio::net::TcpStream,
+    dc: i32,
+) -> Result<ObfuscatedStream<tokio::net::TcpStream>, std::io::Error> {
+    let mut handshake = generate_server_handshake_frame();
+    let original_key = handshake.0.key().clone();
+    let original_iv = handshake.0.iv().clone();
+
+    let mut encryptor = handshake.decryptor();
+    let decryptor = handshake.encryptor();
+
+    encryptor.apply_keystream(&mut handshake.0.data);
+    handshake.0.with_key(&original_key).with_iv(&original_iv);
+
+    socket.write_all(&handshake.0.data).await?;
+
+    Ok(conn::ObfuscatedStream::new(
+        socket, dc, encryptor, decryptor,
+    ))
+}
+
+fn generate_server_handshake_frame() -> server::ServerHandshakeFrame {
+    let mut frame = HandShakeFrame {
+        data: [0; HANDSHAKE_FRAME_LEN],
+    };
+    loop {
+        frame.data = rand::random();
+        if frame.data[0] == 0xef {
+            continue;
+        }
+        // if frame[..4] matches (little endian u32) 0x44414548, 0x54534f50, 0x20544547, 0x4954504f, 0xeeeeeeee we regenerate the rand again
+        let header = u32::from_le_bytes(frame.data[..4].try_into().unwrap());
+        if header == 0x44414548
+            || header == 0x54534f50
+            || header == 0x20544547
+            || header == 0x4954504f
+            || header == 0xeeeeeeee
+        {
+            continue;
+        }
+
+        // if frame[4..8] are zeros, we regenerate the rand again
+        if frame.data[4..8] == [0, 0, 0, 0] {
+            continue;
+        }
+
+        break;
+    }
+    // Now we set the connection type
+    frame.data[HANDSHAKE_FRAME_OFFSET_CONNECTION_TYPE..HANDSHAKE_FRAME_OFFSET_DC]
+        .copy_from_slice(&HANDSHAKE_CONNECTION_TYPE);
+
+    server::ServerHandshakeFrame(frame)
 }
 
 #[cfg(test)]
 mod test {
+    use std::io::Cursor;
+
     use super::*;
     use base64::Engine;
 
     #[test]
-    fn test_known_ok_handshake() {
+    fn test_known_ok_handshake_1() -> Result<(), std::io::Error> {
         let secret = base64::prelude::BASE64_STANDARD_NO_PAD
             .decode("NnoYmu4Y+jHBkAVO/UqOlQ")
             .unwrap();
         let handshake_frame = base64::prelude::BASE64_STANDARD_NO_PAD.decode("gDcXwaMY4RwlR+nJw+ILDr123UJHHjjE/U5pF4m/Y04AmH7lEpEL6UYRnIYDbDlOHSDxc1ToziPvNlJJh8RMow")
         .unwrap();
         let dc = 2;
-        let encrypted_text = base64::prelude::BASE64_STANDARD_NO_PAD
+        let write_content_text = base64::prelude::BASE64_STANDARD_NO_PAD
             .decode("AQIDBAUGBwgJCg")
             .unwrap();
-        let encrypted_cipher = base64::prelude::BASE64_STANDARD_NO_PAD
+        let write_content_cipher = base64::prelude::BASE64_STANDARD_NO_PAD
             .decode("wZV3TR39l9nRoQ")
             .unwrap();
-        let decrypted_text = base64::prelude::BASE64_STANDARD_NO_PAD
+        let read_content_text = base64::prelude::BASE64_STANDARD_NO_PAD
             .decode("4wZj6mUUew")
             .unwrap();
-        let decrypted_cipher = base64::prelude::BASE64_STANDARD_NO_PAD
+        let read_content_cipher = base64::prelude::BASE64_STANDARD_NO_PAD
             .decode("YWJjZGVmZw")
             .unwrap();
 
         let mut data = [0u8; HANDSHAKE_FRAME_LEN];
         data.copy_from_slice(&handshake_frame);
-        let conn = client_handshake_handle(&secret, &mut data).unwrap();
+
+        let mock_frame_socket = Cursor::new(handshake_frame.to_vec());
+        let mut conn = client_handshake_handle(mock_frame_socket, &secret, &mut data).unwrap();
         assert_eq!(conn.dc, dc);
+
+        // Use the decryptor to decrypt the encrypted text to read
+        let mut read_content = read_content_cipher.to_vec();
+        conn.decryptor.apply_keystream(&mut read_content);
+        assert_eq!(read_content, read_content_text);
+
+        // Use the encryptor to encrypt the decrypted text to write
+        let mut write_content = write_content_text.to_vec();
+        conn.encryptor.apply_keystream(&mut write_content);
+        assert_eq!(write_content, write_content_cipher);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_known_ok_handshake_2() -> Result<(), std::io::Error> {
+        let secret = base64::prelude::BASE64_STANDARD_NO_PAD
+            .decode("NnoYmu4Y+jHBkAVO/UqOlQ")
+            .unwrap();
+        let handshake_frame = base64::prelude::BASE64_STANDARD_NO_PAD.decode("M2WyxeiwIQB+ZOFxNzSNHtu9OdESkfxv3JkKFimCxUoYA3BD/Ql9nXB/OIonCKLUKCcS0VzZ2P6/+5oQ9GI8YA")
+        .unwrap();
+        let dc = 2;
+        let write_content_text = base64::prelude::BASE64_STANDARD_NO_PAD
+            .decode("AQIDBAUGBwgJCg")
+            .unwrap();
+        let write_content_cipher = base64::prelude::BASE64_STANDARD_NO_PAD
+            .decode("tzAwrCz00odERg")
+            .unwrap();
+        let read_content_text = base64::prelude::BASE64_STANDARD_NO_PAD
+            .decode("QkIvwGQDgA")
+            .unwrap();
+        let read_content_cipher = base64::prelude::BASE64_STANDARD_NO_PAD
+            .decode("YWJjZGVmZw")
+            .unwrap();
+
+        let mut data = [0u8; HANDSHAKE_FRAME_LEN];
+        data.copy_from_slice(&handshake_frame);
+
+        let mock_frame_socket = Cursor::new(handshake_frame.to_vec());
+        let mut conn = client_handshake_handle(mock_frame_socket, &secret, &mut data).unwrap();
+        assert_eq!(conn.dc, dc);
+
+        // Use the decryptor to decrypt the encrypted text to read
+        let mut read_content = read_content_cipher.to_vec();
+        conn.decryptor.apply_keystream(&mut read_content);
+        assert_eq!(read_content, read_content_text);
+
+        // Use the encryptor to encrypt the decrypted text to write
+        let mut write_content = write_content_text.to_vec();
+        conn.encryptor.apply_keystream(&mut write_content);
+        assert_eq!(write_content, write_content_cipher);
+
+        Ok(())
     }
 }

@@ -32,6 +32,7 @@ pub struct UserConfig {
     pub allowlist_urls: Option<Vec<String>>,
     pub update_list_every: Option<Duration>,
     pub users: Option<Vec<User>>,
+    pub allow_dc_fallback: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -43,6 +44,7 @@ pub struct Config {
     pub allowlist_urls: Vec<String>,
     pub update_list_every: Duration,
     pub users: Vec<User>,
+    pub allow_dc_fallback: bool,
 }
 
 impl Config {
@@ -57,6 +59,7 @@ impl Config {
                 port: 8443,
             }),
             prefer_ip: read_info.prefer_ip.unwrap_or(false),
+            allow_dc_fallback: read_info.allow_dc_fallback.unwrap_or(true),
             blocklist_urls: read_info.blocklist_urls.unwrap_or(vec![]),
             allowlist_urls: read_info.allowlist_urls.unwrap_or(vec![]),
             update_list_every: read_info

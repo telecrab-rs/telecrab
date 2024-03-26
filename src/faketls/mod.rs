@@ -78,20 +78,22 @@ impl<'a> ClientHello<'a> {
         Ok(&self)
     }
 
-    pub fn generate_welcome_packet(&self, buffer: &mut Vec<u8>) {
+    pub fn generate_welcome_packet(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+
         let mut record = TlsRecord::new(
             record::RecordType::Handshake,
             record::Version::TLS12,
             self.generate_server_hello(),
         );
-        buffer.extend_from_slice(&record.to_bytes());
+        buffer.extend_from_slice(&record.bytes);
 
         record = TlsRecord::new(
             record::RecordType::ChangeCipherSpec,
             record::Version::TLS12,
             vec![CHANGE_CYPHER_VALUE],
         );
-        buffer.extend_from_slice(&record.to_bytes());
+        buffer.extend_from_slice(&record.bytes);
 
         let rand_length = 1024 + rand::thread_rng().gen_range(0..3092);
         let mut random_garbage = vec![0u8; rand_length];
@@ -102,7 +104,7 @@ impl<'a> ClientHello<'a> {
             record::Version::TLS12,
             random_garbage,
         );
-        buffer.extend_from_slice(&record.to_bytes());
+        buffer.extend_from_slice(&record.bytes);
 
         // Now we have to calculate the MAC
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.user.unwrap().secret.key).unwrap();
@@ -113,6 +115,8 @@ impl<'a> ClientHello<'a> {
         let mac_result = mac.finalize().into_bytes();
         buffer[WELCOME_PACKET_RANDOM_OFFSET..WELCOME_PACKET_RANDOM_OFFSET + mac_result.len()]
             .copy_from_slice(&mac_result);
+
+        buffer
     }
 
     pub fn generate_server_hello(&self) -> Vec<u8> {

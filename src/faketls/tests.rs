@@ -137,27 +137,26 @@ mod tests {
             cipher_suites: vec![4867],
         };
 
-        let mut welcome_packet = Vec::new();
-        client_hello.generate_welcome_packet(&mut welcome_packet);
+        let mut welcome_packet = client_hello.generate_welcome_packet();
 
         let welcome_packet_initial = welcome_packet.clone();
         let bytes_vec = record::TlsRecord::from_bytes_multiple(&welcome_packet_initial);
         let records = bytes_vec
             .iter()
             .map(TlsRecordFields::from)
-            .collect::<Vec<TlsRecordFields>>();
+            .collect::<Vec<TlsRecordFields<&[u8]>>>();
 
-        assert_eq!(records[0].type_, record::RecordType::Handshake as u8);
-        assert_eq!(records[0].version, record::Version::TLS12 as u16);
+        assert_eq!(records[0].type_, record::RecordType::Handshake);
+        assert_eq!(records[0].version, record::Version::TLS12);
         // Server Welcome
         assert_eq!(records[0].payload[0], HANDSHAKE_TYPE_SERVER);
         assert_eq!(records.len(), 3);
-        assert_eq!(records[1].type_, record::RecordType::ChangeCipherSpec as u8);
-        assert_eq!(records[1].version, record::Version::TLS12 as u16);
+        assert_eq!(records[1].type_, record::RecordType::ChangeCipherSpec);
+        assert_eq!(records[1].version, record::Version::TLS12);
         assert_eq!(records[1].payload.len(), 1);
         assert_eq!(records[1].payload[0], 1);
-        assert_eq!(records[2].type_, record::RecordType::ApplicationData as u8);
-        assert_eq!(records[2].version, record::Version::TLS12 as u16);
+        assert_eq!(records[2].type_, record::RecordType::ApplicationData);
+        assert_eq!(records[2].version, record::Version::TLS12);
 
         let extracted_hash = &welcome_packet[faketls::WELCOME_PACKET_RANDOM_OFFSET
             ..faketls::WELCOME_PACKET_RANDOM_OFFSET + faketls::RANDOM_LENGTH]
