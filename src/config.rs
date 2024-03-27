@@ -52,20 +52,22 @@ impl Config {
         let config = std::fs::read_to_string(file).unwrap_or(String::new());
         let read_info = toml::from_str::<UserConfig>(&config).expect("Could not parse config file");
 
+        Self::default().merge(read_info)
+    }
+
+    pub fn default() -> Config {
         Config {
-            dc_id: read_info.dc_id.unwrap_or("4".to_string()),
-            bind_to: read_info.bind_to.unwrap_or(HostPort {
+            dc_id: "4".to_string(),
+            bind_to: HostPort {
                 host: IpAddr::from([0, 0, 0, 0]),
                 port: 8443,
-            }),
-            prefer_ip: read_info.prefer_ip.unwrap_or(false),
-            allow_dc_fallback: read_info.allow_dc_fallback.unwrap_or(true),
-            blocklist_urls: read_info.blocklist_urls.unwrap_or(vec![]),
-            allowlist_urls: read_info.allowlist_urls.unwrap_or(vec![]),
-            update_list_every: read_info
-                .update_list_every
-                .unwrap_or(Duration::from_secs(3600)),
-            users: read_info.users.unwrap_or(vec![
+            },
+            prefer_ip: false,
+            allow_dc_fallback: true,
+            blocklist_urls: vec![],
+            allowlist_urls: vec![],
+            update_list_every: Duration::from_secs(3600),
+            users: vec![
                 User {
                     user_info: "sample_user".to_string(),
                     secret: secret::MTProtoSecret::new("hello-ids.example.com"),
@@ -74,7 +76,20 @@ impl Config {
                     user_info: "sample_user2".to_string(),
                     secret: secret::MTProtoSecret::new("hello-ids.example.com"),
                 },
-            ]),
+            ],
+        }
+    }
+
+    pub fn merge(self, other: UserConfig) -> Config {
+        Config {
+            dc_id: other.dc_id.unwrap_or(self.dc_id),
+            bind_to: other.bind_to.unwrap_or(self.bind_to),
+            prefer_ip: other.prefer_ip.unwrap_or(self.prefer_ip),
+            allow_dc_fallback: other.allow_dc_fallback.unwrap_or(self.allow_dc_fallback),
+            blocklist_urls: other.blocklist_urls.unwrap_or(self.blocklist_urls),
+            allowlist_urls: other.allowlist_urls.unwrap_or(self.allowlist_urls),
+            update_list_every: other.update_list_every.unwrap_or(self.update_list_every),
+            users: other.users.unwrap_or(self.users),
         }
     }
 }

@@ -3,7 +3,7 @@ use std::{pin::Pin, task::Poll};
 use rand::Rng;
 use tokio::io::{AsyncRead, AsyncWrite, BufStream};
 
-use crate::proxy::HasPeerAddr;
+use crate::tokio_utils::HasPeerAddr;
 
 use super::record::TlsRecord;
 
@@ -12,7 +12,7 @@ pub struct FakeTlsStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
-    inner: BufStream<T>,
+    pub(crate) inner: BufStream<T>,
     read_buffer: Vec<u8>,
     partial_payload: Vec<u8>,
 }

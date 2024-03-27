@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 
-use crate::proxy::HasPeerAddr;
+use crate::tokio_utils::HasPeerAddr;
 
 use self::conn::ObfuscatedStream;
 pub use self::frame::*;
@@ -153,7 +153,7 @@ pub async fn server_handshake<'a>(
     _proxy: &'a crate::proxy::Proxy,
     mut socket: tokio::net::TcpStream,
     dc: i32,
-) -> Result<ObfuscatedStream<tokio::net::TcpStream>, std::io::Error> {
+) -> Result<ObfuscatedStream<Box<tokio::net::TcpStream>>, std::io::Error> {
     let mut handshake = generate_server_handshake_frame();
     let original_key = handshake.0.key().clone();
     let original_iv = handshake.0.iv().clone();
@@ -167,7 +167,10 @@ pub async fn server_handshake<'a>(
     socket.write_all(&handshake.0.data).await?;
 
     Ok(conn::ObfuscatedStream::new(
-        socket, dc, encryptor, decryptor,
+        Box::new(socket),
+        dc,
+        encryptor,
+        decryptor,
     ))
 }
 

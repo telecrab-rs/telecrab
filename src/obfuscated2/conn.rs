@@ -1,19 +1,20 @@
 use std::{pin::Pin, task::Poll};
 
-use crate::{faketls::conn::FakeTlsStream, proxy::HasPeerAddr};
 use aes::cipher::StreamCipher;
 use aes::Aes256;
 use ctr::Ctr128BE;
 use tokio::io::{AsyncRead, AsyncWrite, BufStream};
+
+use crate::tokio_utils::HasPeerAddr;
 
 pub struct ObfuscatedStream<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     pub dc: i32,
-    inner: BufStream<T>,
-    encryptor: Ctr128BE<Aes256>,
-    decryptor: Ctr128BE<Aes256>,
+    pub(crate) inner: BufStream<T>,
+    pub(crate) encryptor: Ctr128BE<Aes256>,
+    pub(crate) decryptor: Ctr128BE<Aes256>,
 }
 
 impl<T> ObfuscatedStream<T>
